@@ -453,7 +453,8 @@ function bindControls() {
     }
   });
 
-  window.addEventListener('resize', resizeCanvas);
+  // ヘッダー高の変化(パネル開閉・フォント読み込み・回転)にも追従
+  new ResizeObserver(resizeCanvas).observe(canvas.parentElement);
 }
 
 // ---- 起動 ----
