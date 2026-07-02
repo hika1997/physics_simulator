@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#171c26">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>物理シミュレーター</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚛️</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="bar">
+      <h1>⚛ 物理シミュレーター</h1>
+      <select id="preset" title="シーン切り替え"></select>
+      <button id="pauseBtn">⏸ 一時停止</button>
+      <button id="resetBtn">↺ リセット</button>
+      <button id="menuBtn" title="詳細設定">⚙</button>
+    </div>
+    <div class="bar tools">
+      <span class="label">ツール:</span>
+      <button class="tool active" data-tool="grab" title="ドラッグでつかむ・投げる / 空きスペースをタップでボール追加">🖐 つかむ</button>
+      <button class="tool" data-tool="add" title="タップした場所にボールを追加">➕ 追加</button>
+      <button class="tool" data-tool="delete" title="タップ/なぞって削除">🗑 削除</button>
+      <button class="tool" data-tool="pin" title="タップで固定/解除">📌 固定</button>
+      <button class="tool" data-tool="attract" title="押している間、引き寄せる">🧲 引力</button>
+      <button class="tool" data-tool="repel" title="押している間、弾き飛ばす">💥 斥力</button>
+    </div>
+    <div id="panel" class="panel">
+      <div class="control">
+        <label for="gravity">重力</label>
+        <input type="range" id="gravity" min="0" max="2000" step="10" value="500">
+        <output id="gravityValue">500</output>
+      </div>
+      <div class="control">
+        <label for="wind">風</label>
+        <input type="range" id="wind" min="-800" max="800" step="10" value="0">
+        <output id="windValue">0</output>
+      </div>
+      <div class="control">
+        <label for="restitution">反発係数</label>
+        <input type="range" id="restitution" min="-0.01" max="1" step="0.01" value="-0.01">
+        <output id="restitutionValue">自動</output>
+      </div>
+      <div class="control">
+        <label for="timeScale">速度</label>
+        <input type="range" id="timeScale" min="0.1" max="3" step="0.1" value="1">
+        <output id="timeScaleValue">1.0x</output>
+      </div>
+      <div class="control">
+        <label for="vectors"><input type="checkbox" id="vectors"> 速度ベクトル表示</label>
+      </div>
+      <button id="stepBtn" title="一時停止中に1コマ進める">⏭ コマ送り</button>
+    </div>
+  </header>
+
+  <main>
+    <canvas id="canvas"></canvas>
+  </main>
+
+  <footer>
+    <span id="description"></span>
+    <span id="stats"></span>
+  </footer>
+
+  <script src="js/physics.js"></script>
+  <script src="js/presets.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
