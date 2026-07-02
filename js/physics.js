@@ -33,6 +33,9 @@ class Body {
     color = '#4a9eff',
     isStatic = false,
     trail = false,
+    lifetime = null,      // 秒。指定すると寿命で消える(パーティクル用)
+    noCollide = false,    // 同じgroupの粒子同士は衝突しない(布用)
+    group = 0,
   }) {
     this.id = nextBodyId++;
     this.pos = { x, y };
@@ -46,6 +49,38 @@ class Body {
     this.friction = friction;
     this.color = color;
     this.trail = trail ? [] : null;
+    this.lifetime = lifetime;
+    this.age = 0;
+    this.noCollide = noCollide;
+    this.group = group;
+  }
+
+  setStatic(flag) {
+    this.isStatic = flag;
+    this.invMass = flag ? 0 : 1 / this.mass;
+    if (flag) {
+      this.vel.x = 0;
+      this.vel.y = 0;
+    }
+  }
+}
+
+class Emitter {
+  constructor({
+    x, y,
+    rate = 20,          // 個/秒
+    speed = 400,
+    angle = -Math.PI / 2, // 射出方向(ラジアン、-90°=上)
+    spread = 0.3,        // 角度のばらつき
+    radius = 5,
+    radiusJitter = 3,
+    lifetime = 6,
+    colors = ['#4a9eff'],
+    maxAlive = 250,      // このエミッター由来の最大生存数
+  }) {
+    Object.assign(this, { x, y, rate, speed, angle, spread, radius, radiusJitter, lifetime, colors, maxAlive });
+    this.accum = 0;
+    this.alive = 0;
   }
 }
 
@@ -79,7 +114,9 @@ class World {
     this.bodies = [];
     this.constraints = [];
     this.springs = [];
+    this.emitters = [];
     this.gravity = 500;            // px/s^2(下向き)
+    this.wind = 0;                 // 横方向の力(px/s^2)
     this.mutualGravity = false;    // 惑星軌道モード
     this.mutualG = 8000;           // 万有引力定数(px単位系)
     this.walls = true;             // 画面端で反射するか
@@ -87,6 +124,9 @@ class World {
     this.airDrag = 0;              // 空気抵抗係数
     this.iterations = 10;          // コンストレイント/衝突の反復回数
     this.maxTrail = 400;
+    this.maxBodies = 600;          // パフォーマンス保護
+    this.attractor = null;         // {x, y, strength} ポインタ引力/斥力
+    this._grid = new Map();        // 空間ハッシュ(ブロードフェーズ)
   }
 
   addBody(opts) {
@@ -113,10 +153,18 @@ class World {
     this.springs = this.springs.filter((s) => s.a !== body && s.b !== body);
   }
 
+  addEmitter(opts) {
+    const e = new Emitter(opts);
+    this.emitters.push(e);
+    return e;
+  }
+
   clear() {
     this.bodies = [];
     this.constraints = [];
     this.springs = [];
+    this.emitters = [];
+    this.attractor = null;
   }
 
   restitutionOf(body) {
@@ -124,6 +172,7 @@ class World {
   }
 
   step(dt) {
+    this.runEmitters(dt);
     this.applyForces(dt);
     this.integrateVelocities(dt);
     for (let i = 0; i < this.iterations; i++) {
@@ -136,6 +185,56 @@ class World {
       if (this.walls) this.solveWalls();
     }
     this.updateTrails();
+    this.reapBodies(dt);
+  }
+
+  runEmitters(dt) {
+    for (const e of this.emitters) {
+      e.accum += e.rate * dt;
+      while (e.accum >= 1) {
+        e.accum -= 1;
+        if (e.alive >= e.maxAlive || this.bodies.length >= this.maxBodies) continue;
+        const a = e.angle + (Math.random() - 0.5) * e.spread;
+        const sp = e.speed * (0.85 + Math.random() * 0.3);
+        const b = this.addBody({
+          x: e.x, y: e.y,
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp,
+          radius: e.radius + Math.random() * e.radiusJitter,
+          restitution: 0.6,
+          lifetime: e.lifetime,
+          color: e.colors[(Math.random() * e.colors.length) | 0],
+        });
+        b._emitter = e;
+        e.alive++;
+      }
+    }
+  }
+
+  reapBodies(dt) {
+    const margin = 200;
+    let removed = null;
+    for (const b of this.bodies) {
+      if (b.isStatic) continue;
+      if (b.lifetime !== null) {
+        b.age += dt;
+        if (b.age >= b.lifetime) (removed ??= []).push(b);
+      }
+      // 壁なしモードで画面外に大きく出た物体を回収
+      if (!this.walls && (
+        b.pos.x < -margin || b.pos.x > this.width + margin ||
+        b.pos.y < -margin || b.pos.y > this.height + margin
+      ) && b.lifetime !== null) {
+        (removed ??= []).push(b);
+      }
+    }
+    if (removed) {
+      const set = new Set(removed);
+      for (const b of set) if (b._emitter) b._emitter.alive--;
+      this.bodies = this.bodies.filter((b) => !set.has(b));
+      this.constraints = this.constraints.filter((c) => !set.has(c.a) && !set.has(c.b));
+      this.springs = this.springs.filter((s) => !set.has(s.a) && !set.has(s.b));
+    }
   }
 
   applyForces(dt) {
@@ -144,13 +243,27 @@ class World {
       b.force.y = 0;
       if (b.isStatic) continue;
       b.force.y += this.gravity * b.mass;
+      b.force.x += this.wind * b.mass;
       if (this.airDrag > 0) {
         b.force.x -= b.vel.x * this.airDrag * b.mass;
         b.force.y -= b.vel.y * this.airDrag * b.mass;
       }
     }
+    if (this.attractor) this.applyAttractor();
     if (this.mutualGravity) this.applyMutualGravity();
     for (const s of this.springs) this.applySpring(s);
+  }
+
+  applyAttractor() {
+    const { x, y, strength } = this.attractor;
+    for (const b of this.bodies) {
+      if (b.isStatic) continue;
+      const dx = x - b.pos.x, dy = y - b.pos.y;
+      const dist = Math.max(Math.hypot(dx, dy), 30);
+      const f = (strength * b.mass) / dist;
+      b.force.x += (dx / dist) * f;
+      b.force.y += (dy / dist) * f;
+    }
   }
 
   applyMutualGravity() {
@@ -242,9 +355,38 @@ class World {
 
   solveCollisions() {
     const n = this.bodies.length;
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        this.resolvePair(this.bodies[i], this.bodies[j]);
+    if (n < 40) {
+      // 少数なら総当たりで十分
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          this.resolvePair(this.bodies[i], this.bodies[j]);
+        }
+      }
+      return;
+    }
+    // 空間ハッシュ: セルサイズは最大半径に追従
+    let maxR = 8;
+    for (const b of this.bodies) if (b.radius > maxR) maxR = b.radius;
+    const cell = maxR * 2;
+    const grid = this._grid;
+    grid.clear();
+    for (const b of this.bodies) {
+      const key = ((b.pos.x / cell) | 0) * 73856093 ^ ((b.pos.y / cell) | 0) * 19349663;
+      let bucket = grid.get(key);
+      if (!bucket) grid.set(key, bucket = []);
+      bucket.push(b);
+    }
+    for (const b of this.bodies) {
+      const cx = (b.pos.x / cell) | 0, cy = (b.pos.y / cell) | 0;
+      for (let gx = cx - 1; gx <= cx + 1; gx++) {
+        for (let gy = cy - 1; gy <= cy + 1; gy++) {
+          const bucket = grid.get(gx * 73856093 ^ gy * 19349663);
+          if (!bucket) continue;
+          for (const other of bucket) {
+            if (other.id <= b.id) continue; // 各ペア1回だけ
+            this.resolvePair(b, other);
+          }
+        }
       }
     }
   }
@@ -252,6 +394,7 @@ class World {
   resolvePair(a, b) {
     const invMassSum = a.invMass + b.invMass;
     if (invMassSum === 0) return;
+    if (a.noCollide && b.noCollide && a.group === b.group) return;
     const d = Vec.sub(b.pos, a.pos);
     const dist = Vec.len(d);
     const minDist = a.radius + b.radius;
