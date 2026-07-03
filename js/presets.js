@@ -161,6 +161,163 @@ const PRESETS = {
     },
   },
 
+  dominoes: {
+    name: 'ドミノ倒し',
+    description: '振り子の球が最初のドミノを倒します。ドラッグで並べ替えも',
+    setup(world) {
+      world.gravity = 900;
+      world.walls = true;
+      world.mutualGravity = false;
+      world.airDrag = 0;
+      world.iterations = 14;
+      const floor = world.height;
+      const n = Math.min(14, Math.floor((world.width - 260) / 52));
+      const x0 = world.width * 0.22;
+      for (let i = 0; i < n; i++) {
+        world.addBody({
+          shape: 'box', w: 13, h: 78,
+          x: x0 + i * 52, y: floor - 39,
+          restitution: 0.05, friction: 0.5,
+          color: pick(i),
+        });
+      }
+      // 振り子の球: 最下点でちょうど最初のドミノの上部に当たる長さにする
+      const anchor = { x: x0, y: 60 };
+      const L = (floor - 60) - 60; // 最下点の球中心 = ドミノ上部付近
+      const swing = 1.1; // 引き上げ角(ラジアン)
+      const ball = world.addBody({
+        x: anchor.x - Math.sin(swing) * L,
+        y: anchor.y + Math.cos(swing) * L,
+        radius: 24, mass: 40,
+        restitution: 0.2, friction: 0.2,
+        color: '#6b7280',
+      });
+      world.addConstraint(ball, null, anchor, L);
+    },
+  },
+
+  tower: {
+    name: '積み木タワー',
+    description: 'ボールを投げて塔を崩してください(タップでボール追加)',
+    setup(world) {
+      world.gravity = 900;
+      world.walls = true;
+      world.mutualGravity = false;
+      world.airDrag = 0;
+      world.iterations = 16;
+      const floor = world.height;
+      const bw = 52, bh = 26;
+      const cx = world.width * 0.62;
+      // ピラミッド型(上ほど狭い)にすると外側のブロックも下から支えられて安定する
+      const counts = [5, 4, 4, 3, 3, 2, 2, 1];
+      for (let r = 0; r < counts.length; r++) {
+        const count = counts[r];
+        for (let k = 0; k < count; k++) {
+          const off = (k - (count - 1) / 2) * bw;
+          world.addBody({
+            shape: 'box', w: bw - 2, h: bh,
+            // 生成時のめり込みによるガタつきを防ぐため僅かに隙間を空けて積む
+            x: cx + off, y: floor - bh / 2 - r * (bh + 1) - 1,
+            restitution: 0.05, friction: 0.55,
+            color: pick(r),
+          });
+        }
+      }
+    },
+  },
+
+  ramps: {
+    name: '斜面と風車',
+    description: 'ボールが斜面を転がり、シーソーと風車に当たります',
+    setup(world) {
+      world.gravity = 700;
+      world.walls = true;
+      world.mutualGravity = false;
+      world.airDrag = 0.02;
+      world.iterations = 12;
+      const W = world.width, H = world.height;
+      // ジグザグの静的斜面
+      world.addBody({
+        shape: 'box', w: W * 0.5, h: 14,
+        x: W * 0.25, y: H * 0.25, angle: 0.22,
+        isStatic: true, restitution: 0.1, friction: 0.3, color: '#3a4358',
+      });
+      world.addBody({
+        shape: 'box', w: W * 0.45, h: 14,
+        x: W * 0.72, y: H * 0.5, angle: -0.24,
+        isStatic: true, restitution: 0.1, friction: 0.3, color: '#3a4358',
+      });
+      // シーソー(中心をピン留め、回転自由)
+      const seesaw = world.addBody({
+        shape: 'box', w: 240, h: 12,
+        x: W * 0.3, y: H - 90,
+        restitution: 0.2, friction: 0.5, color: '#8b6f47',
+      });
+      world.addPin(seesaw, { x: W * 0.3, y: H - 90 });
+      world.addBody({ // 支柱(飾り)
+        shape: 'box', w: 14, h: 60,
+        x: W * 0.3, y: H - 30,
+        isStatic: true, restitution: 0.1, friction: 0.3, color: '#3a4358',
+      });
+      // 風車(モーター定速回転)
+      world.addBody({
+        shape: 'box', w: 190, h: 12,
+        x: W * 0.68, y: H - 130,
+        isStatic: true, motor: 1.6,
+        restitution: 0.4, friction: 0.2, color: '#c77dff',
+      });
+      // 上からボールを供給
+      world.addEmitter({
+        x: 40, y: 30, rate: 1.2,
+        speed: 120, angle: 0.25, spread: 0.1,
+        radius: 13, radiusJitter: 6,
+        lifetime: 30, maxAlive: 26,
+        colors: PALETTE,
+      });
+    },
+  },
+
+  chaos: {
+    name: '二重振り子カオス',
+    description: 'ほぼ同じ初期条件の2つの振り子が、やがて全く違う軌道に',
+    setup(world) {
+      world.gravity = 600;
+      world.walls = false;
+      world.mutualGravity = false;
+      world.airDrag = 0;
+      world.iterations = 20;
+      const anchor = { x: world.width / 2, y: world.height * 0.32 };
+      const L = Math.min(120, world.height * 0.2);
+      const start = Math.PI * 0.9; // ほぼ真上から
+      const configs = [
+        { offset: 0, color: '#4a9eff' },
+        { offset: 0.005, color: '#ff6b6b' }, // わずか0.005ラジアンの差
+      ];
+      for (const cfg of configs) {
+        const a1 = start + cfg.offset;
+        const b1 = world.addBody({
+          x: anchor.x + Math.sin(a1) * L,
+          y: anchor.y + Math.cos(a1) * L,
+          radius: 11, mass: 3,
+          restitution: 0.5,
+          color: cfg.color,
+          noCollide: true, group: 9, // 振り子同士は衝突させない
+        });
+        world.addConstraint(b1, null, anchor, L);
+        const b2 = world.addBody({
+          x: b1.pos.x + Math.sin(a1) * L,
+          y: b1.pos.y + Math.cos(a1) * L,
+          radius: 11, mass: 3,
+          restitution: 0.5,
+          color: cfg.color,
+          trail: true,
+          noCollide: true, group: 9,
+        });
+        world.addConstraint(b2, b1, null, L);
+      }
+    },
+  },
+
   cloth: {
     name: '布シミュレーション',
     description: '布をドラッグしたり、風スライダーでなびかせてみてください',
