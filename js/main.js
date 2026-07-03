@@ -11,6 +11,43 @@ let timeScale = 1;
 let currentPreset = 'balls';
 let currentTool = 'grab';
 let showVectors = false;
+let soundOn = true;
+
+// ---- 衝突音(WebAudio) ----
+let audioCtx = null;
+let lastSoundTime = 0;
+let soundsThisFrame = 0;
+
+function initAudio() {
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch { return; }
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playImpact(vn, size) {
+  if (!soundOn || !audioCtx || audioCtx.state !== 'running') return;
+  const now = performance.now();
+  if (soundsThisFrame >= 4 || now - lastSoundTime < 25) return;
+  soundsThisFrame++;
+  lastSoundTime = now;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  // 大きい物体ほど低い音、強い衝突ほど大きい音
+  const freq = Math.max(120, 900 - size * 18);
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, t);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.6, t + 0.08);
+  const vol = Math.min(vn / 2500, 1) * 0.18;
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.1);
+}
 
 // マウスドラッグ用
 let dragBody = null;
@@ -45,6 +82,7 @@ function loadPreset(key) {
   world = new World(canvas.width, canvas.height);
   world.iterations = 10;
   PRESETS[key].setup(world);
+  world.onImpact = (vn, x, y, size) => playImpact(vn, size);
   dragBody = null;
   dragSpring = null;
   syncControlsFromWorld();
@@ -79,6 +117,7 @@ function frame(time) {
     fpsLast = time;
   }
 
+  soundsThisFrame = 0;
   if (!paused) {
     accumulator += dt * timeScale;
     const maxSteps = 20;
@@ -184,6 +223,10 @@ function render() {
 
   // ボディ
   for (const b of world.bodies) {
+    if (b.shape === 'box') {
+      drawBox(b);
+      continue;
+    }
     ctx.beginPath();
     ctx.arc(b.pos.x, b.pos.y, b.radius, 0, Math.PI * 2);
     if (b.radius < 7) {
@@ -199,12 +242,28 @@ function render() {
       ctx.fillStyle = grad;
     }
     ctx.fill();
+    // 回転が見えるように中心から縁への線
+    if (!b.isStatic && b.radius >= 9) {
+      ctx.beginPath();
+      ctx.moveTo(b.pos.x, b.pos.y);
+      ctx.lineTo(
+        b.pos.x + Math.cos(b.angle) * b.radius * 0.85,
+        b.pos.y + Math.sin(b.angle) * b.radius * 0.85,
+      );
+      ctx.strokeStyle = '#00000033';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
     if (b.isStatic && b.radius >= 7) {
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, b.radius, 0, Math.PI * 2);
       ctx.strokeStyle = '#ffffff44';
       ctx.lineWidth = 2;
       ctx.stroke();
     }
     if (b === dragBody) {
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, b.radius, 0, Math.PI * 2);
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -229,6 +288,32 @@ function render() {
   const ke = world.kineticEnergy();
   document.getElementById('stats').textContent =
     `${fps}fps | 物体: ${world.bodies.length} | 運動エネルギー: ${Math.round(ke).toLocaleString()}`;
+}
+
+function drawBox(b) {
+  ctx.save();
+  ctx.translate(b.pos.x, b.pos.y);
+  ctx.rotate(b.angle);
+  const w = b.hw * 2, h = b.hh * 2;
+  const grad = ctx.createLinearGradient(-b.hw, -b.hh, b.hw, b.hh);
+  grad.addColorStop(0, lighten(b.color, 0.3));
+  grad.addColorStop(1, b.color);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(-b.hw, -b.hh, w, h, Math.min(4, b.hw, b.hh));
+  else ctx.rect(-b.hw, -b.hh, w, h);
+  ctx.fill();
+  if (b.isStatic) {
+    ctx.strokeStyle = '#ffffff33';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  if (b === dragBody) {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawArrow(x0, y0, x1, y1) {
@@ -302,7 +387,20 @@ function addBallAt(x, y) {
   });
 }
 
+function addBoxAt(x, y) {
+  if (world.bodies.length >= world.maxBodies) return;
+  world.addBody({
+    shape: 'box', x, y,
+    w: 24 + Math.random() * 40,
+    h: 24 + Math.random() * 40,
+    angle: (Math.random() - 0.5) * 0.8,
+    restitution: 0.2, friction: 0.4,
+    color: PALETTE[(Math.random() * PALETTE.length) | 0],
+  });
+}
+
 function onPointerDown(e) {
+  initAudio(); // ブラウザの自動再生制限解除はユーザー操作時のみ可能
   const p = canvasPos(e);
   mouse.x = p.x; mouse.y = p.y;
   mouse.downX = p.x; mouse.downY = p.y;
@@ -319,6 +417,8 @@ function onPointerDown(e) {
     }
   } else if (currentTool === 'add') {
     addBallAt(p.x, p.y);
+  } else if (currentTool === 'addBox') {
+    addBoxAt(p.x, p.y);
   } else if (currentTool === 'delete') {
     const hit = world.bodyAt(p.x, p.y);
     if (hit) world.removeBody(hit);
@@ -381,6 +481,12 @@ function bindControls() {
   });
 
   document.getElementById('resetBtn').addEventListener('click', () => loadPreset(currentPreset));
+
+  document.getElementById('soundBtn').addEventListener('click', (e) => {
+    soundOn = !soundOn;
+    if (soundOn) initAudio();
+    e.target.textContent = soundOn ? '🔊' : '🔇';
+  });
 
   // ツール切り替え
   for (const btn of document.querySelectorAll('.tool')) {
